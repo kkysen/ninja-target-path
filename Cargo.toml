@@ -3,7 +3,17 @@ name = "ninja-target-path"
 version = "0.1.0"
 authors = ["Khyber Sen <kkysen@gmail.com>"]
 edition = "2018"
+description = "query and cache the output path of a ninja target"
+license = "MIT"
+repository = "https://github.com/kkysen/ninja-target-path"
+homepage = "https://github.com/kkysen/ninja-target-path"
+readme = "README.md"
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["ninja"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = "3.0.0-beta.2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.5.8"
