@@ -64,6 +64,7 @@ impl Cache {
             Occupied(entry) => entry.into_mut(),
             Vacant(entry) => {
                 let path = Self::lookup(dir.as_path(), entry.key())?;
+                self.dirty = true;
                 entry.insert(path)
             }
         }.as_path();
