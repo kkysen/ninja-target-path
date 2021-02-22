@@ -1,9 +1,10 @@
+use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use structopt::StructOpt;
 
 use ninja_target_path::cache::Cache;
-use std::ffi::OsString;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -23,13 +24,13 @@ struct Args {
 fn main(args: Args) -> anyhow::Result<()> {
     let Args { build_dir, absolute, targets } = args;
     let mut cache = Cache::read(build_dir.as_path())?;
+    let cwd = if absolute {
+        env::current_dir()?
+    } else {
+        PathBuf::new()
+    };
     for target in targets {
-        let path = cache.get(target)?;
-        let path = if absolute {
-            fs_err::canonicalize(path)?
-        } else {
-            path
-        };
+        let path = cwd.join(cache.get(target)?);
         println!("{}", path.display());
     }
     cache.write_drop()?;
