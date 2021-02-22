@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::fmt::{Debug, Display, Formatter};
 use std::fmt;
-use std::ops::Deref;
+use std::ops::{Deref, Index};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::str::from_utf8;
@@ -13,6 +13,7 @@ use DependencyType::{Implicit, Normal, Ordered};
 
 use crate::parser::Parser;
 use crate::util::err;
+use std::collections::HashMap;
 
 impl Parser<'_> {
     fn check_count(&mut self, b: u8, expected: usize, prefix: impl Display) -> anyhow::Result<()> {
@@ -47,12 +48,24 @@ impl Parser<'_> {
     }
 }
 
-#[derive(Eq, PartialEq, Copy, Clone)]
-pub struct Bytes<'a>(&'a [u8]);
+#[derive(Eq, PartialEq, Copy, Clone, Ord, PartialOrd, Hash)]
+pub struct Bytes<'a>(pub &'a [u8]);
 
 impl<'a> From<&'a [u8]> for Bytes<'a> {
-    fn from(inner: &'a [u8]) -> Self {
-        Self(inner)
+    fn from(this: &'a [u8]) -> Self {
+        Self(this)
+    }
+}
+
+impl<'a> From<&'a OsStr> for Bytes<'a> {
+    fn from(this: &'a OsStr) -> Self {
+        this.as_bytes().into()
+    }
+}
+
+impl<'a> From<&'a str> for Bytes<'a> {
+    fn from(this: &'a str) -> Self {
+        this.as_bytes().into()
     }
 }
 
@@ -195,15 +208,15 @@ impl<'a> Parser<'a> {
 
 #[derive(Debug)]
 pub struct Query<'a> {
-    pub targets: Vec<Target<'a>>,
+    pub targets: HashMap<Bytes<'a>, Target<'a>>,
 }
 
 impl<'a> Parser<'a> {
     fn query(&mut self) -> anyhow::Result<Query<'a>> {
-        let mut targets = Vec::new();
+        let mut targets = HashMap::new();
         while self.has_more() {
             let target = self.target()?;
-            targets.push(target);
+            targets.insert(target.name, target);
         }
         Query {
             targets,
@@ -218,5 +231,13 @@ impl<'a> Query<'a> {
                                        parser.current_position(),
                                        from_utf8(parser.surrounding(5))?
         ))
+    }
+}
+
+impl<'a, 'b: 'a, T: Into<Bytes<'a>>> Index<T> for Query<'a> {
+    type Output = Target<'a>;
+    
+    fn index(&self, index: T) -> &Self::Output {
+        &self.targets[&index.into()]
     }
 }

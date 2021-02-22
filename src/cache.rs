@@ -1,48 +1,60 @@
 use Entry::{Occupied, Vacant};
+use std::{env, io};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::io::ErrorKind;
+use std::ffi::{OsStr, OsString};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::str::from_utf8;
 
 use apply::Apply;
 use checked_command::CheckedCommand;
+use fs_err::{File, OpenOptions};
 
 use crate::ninja;
 use crate::util::err;
-use std::str::from_utf8;
 
-pub struct Cache {
-    path: PathBuf,
+#[derive(Debug)]
+pub struct Cache<'a> {
+    dir: &'a Path,
+    file: File,
     cache: HashMap<String, PathBuf>,
     dirty: bool,
 }
 
-impl Cache {
-    pub fn path(&self) -> &Path {
-        self.path.as_path()
-    }
+impl<'a> Cache<'a> {
+    pub const FILE_NAME: &'static str = "targets.cache.toml";
     
-    pub fn dir(&self) -> &Path {
-        // constructor Self::read adds the file name to the dir, so I can always unwrap this
-        self.path().parent().unwrap()
-    }
-    
-    pub fn read(dir: PathBuf) -> anyhow::Result<Self> {
+    pub fn read(dir: &'a Path) -> anyhow::Result<Self> {
         let path = {
-            let mut path = dir;
-            path.push(".targets.cache.toml");
+            let mut path = dir.to_path_buf();
+            path.push(Self::FILE_NAME);
             path
         };
-        let cache = match fs_err::read(path.as_path()) {
-            Ok(bytes) => toml::from_slice(bytes.as_slice())?,
-            Err(error) => match error.kind() {
-                ErrorKind::NotFound => HashMap::new(),
-                _ => Err(error)?,
-            },
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)?;
+        let metadata = file.metadata();
+        let len = metadata
+            .as_ref()
+            .map(|m| m.len() as usize + 1) // null-terminated
+            .unwrap_or(0);
+        let is_out_of_date = (|| -> io::Result<bool> {
+            Ok(metadata?.modified()? < env::current_exe()?.metadata()?.modified()?)
+        })().unwrap_or(false);
+        let cache = if is_out_of_date {
+            HashMap::new()
+        } else {
+            let mut bytes = Vec::with_capacity(len);
+            file.read_to_end(&mut bytes)?;
+            toml::from_slice(bytes.as_slice())?
         };
         Self {
-            path,
+            dir,
+            file,
             cache,
             dirty: false,
         }.apply(Ok)
@@ -53,17 +65,33 @@ impl Cache {
             return Ok(());
         }
         let bytes = toml::to_vec(&self.cache)?;
-        fs_err::write(self.path(), bytes)?;
+        self.file.write_all(bytes.as_slice())?;
         self.dirty = false;
         Ok(())
     }
     
-    pub fn get(&mut self, target: String) -> anyhow::Result<PathBuf> {
-        let dir = self.dir().to_path_buf();
-        let relative_path = match self.cache.entry(target) {
+    pub fn write_drop(mut self) -> anyhow::Result<()> {
+        let result = self.write();
+        // don't write again in drop()
+        self.dirty = false;
+        result
+    }
+}
+
+impl Drop for Cache<'_> {
+    fn drop(&mut self) {
+        self.write().unwrap()
+    }
+}
+
+impl Cache<'_> {
+    pub fn get(&mut self, target: OsString) -> anyhow::Result<PathBuf> {
+        let dir = self.dir.to_path_buf();
+        let target_str = target.into_string().unwrap();
+        let relative_path = match self.cache.entry(target_str) {
             Occupied(entry) => entry.into_mut(),
             Vacant(entry) => {
-                let path = Self::lookup(dir.as_path(), entry.key())?;
+                let path = Self::lookup(dir.as_path(), OsStr::new(entry.key()))?;
                 self.dirty = true;
                 entry.insert(path)
             }
@@ -73,7 +101,7 @@ impl Cache {
         Ok(path)
     }
     
-    fn lookup(dir: &Path, target_name: &str) -> anyhow::Result<PathBuf> {
+    fn lookup(dir: &Path, target_name: &OsStr) -> anyhow::Result<PathBuf> {
         let output = CheckedCommand::new("ninja")
             .arg("-C")
             .arg(dir)
@@ -87,32 +115,19 @@ impl Cache {
                 println!("{}", from_utf8(output.stdout.as_slice()).unwrap());
                 e
             })?;
-        println!("{:#?}", &query);
-        if query.targets.len() != 1 {
-            err("only expecting 1 target")?;
-        };
-        let target = &query.targets[0];
-        if target.name != target_name.as_bytes() {
-            err("wrong target name")?;
-        }
+        // println!("{:#?}", &query);
+        let target = &query[target_name];
         if !target.outputs.is_empty() {
             err("expecting 0 outputs")?;
         }
         if target.rule != b"phony" {
             err("expecting phony rule")?;
         }
-        query
-            .targets[0]
+        target
             .inputs
             .normal[0]
             .as_path()
             .to_path_buf()
             .apply(Ok)
-    }
-}
-
-impl Drop for Cache {
-    fn drop(&mut self) {
-        self.write().unwrap()
     }
 }
