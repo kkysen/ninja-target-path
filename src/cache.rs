@@ -3,7 +3,7 @@ use std::{env, io};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Write};
+use std::io::{Read, Write, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::from_utf8;
@@ -63,6 +63,7 @@ impl<'a> Cache<'a> {
         }
         let bytes = toml::to_vec(&self.cache)?;
         self.file.set_len(0)?;
+        self.file.seek(SeekFrom::Start(0))?;
         self.file.write_all(bytes.as_slice())?;
         self.dirty = false;
         Ok(())
