@@ -26,7 +26,7 @@ fn main(args: Args) -> anyhow::Result<()> {
     for target in targets {
         let path = cache.get(target)?;
         let path = if absolute {
-            path.canonicalize()?
+            fs_err::canonicalize(path)?
         } else {
             path
         };
