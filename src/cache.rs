@@ -27,11 +27,7 @@ impl<'a> Cache<'a> {
     pub const FILE_NAME: &'static str = "targets.cache.toml";
     
     pub fn read(dir: &'a Path) -> anyhow::Result<Self> {
-        let path = {
-            let mut path = dir.to_path_buf();
-            path.push(Self::FILE_NAME);
-            path
-        };
+        let path = dir.join(Self::FILE_NAME);
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -52,12 +48,13 @@ impl<'a> Cache<'a> {
             file.read_to_end(&mut bytes)?;
             toml::from_slice(bytes.as_slice())?
         };
-        Self {
+        let this = Self {
             dir,
             file,
             cache,
             dirty: false,
-        }.apply(Ok)
+        };
+        this.apply(Ok)
     }
     
     pub fn write(&mut self) -> anyhow::Result<()> {
@@ -65,6 +62,7 @@ impl<'a> Cache<'a> {
             return Ok(());
         }
         let bytes = toml::to_vec(&self.cache)?;
+        self.file.set_len(0)?;
         self.file.write_all(bytes.as_slice())?;
         self.dirty = false;
         Ok(())
